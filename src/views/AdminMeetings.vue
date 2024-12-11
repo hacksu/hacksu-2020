@@ -1,63 +1,272 @@
 <template>
-    <div class="container">
-        <h1 style="margin: auto">HacKSU Administrative Meetings</h1>
-        <br>
-        <div class="meeting" v-for="note in notes" :keys="note.id"
-            style="border: 1px solid darkgray;">
-            <div style="display: flex; flex-direction: column; width: 100%;">
-                <h2>{{ note.title }}</h2>
-                <p>{{ formatDate(note.date) }}</p>
-                <div v-if="note.notesMD" v-html="note.notesHTML"></div>
+    <div class="admin-meetings-page">
+        <div class="page-header">
+            <h1>Manage Meetings</h1>
+            <p class="subtitle">Create and edit HacKSU meetings</p>
+        </div>
+
+        <div class="meetings-grid">
+            <div class="meeting-card" v-for="(note, j) in notesToDisplay" :key="note.id">
+                <div class="meeting-form">
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" v-model="note.title" class="form-input" 
+                            placeholder="Enter meeting title..." />
+                    </div>
+
+                    <div class="form-group">
+                        <label>Date</label>
+                        <input type="date" v-model="note.date" class="form-input" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>Notes (Markdown)</label>
+                        <textarea v-model="note.notesMD" class="form-textarea" 
+                            placeholder="Write meeting notes using Markdown..."></textarea>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn btn-primary" @click="update(note, j)">
+                            {{j === 0 ? "Add New Meeting" : "Save Changes"}}
+                            <span v-if="confirmation.has(j)" class="confirmation-icon">✓</span>
+                        </button>
+                        <button class="btn btn-danger" v-if="j !== 0" @click="remove(note, j)">
+                            Delete Meeting
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </template>
+
 <script setup>
-import { onMounted, ref } from 'vue';
-import { remult } from 'remult';
+import { ref, onMounted, onUnmounted, reactive, computed } from "vue";
+import { remult } from "remult";
 import { Note } from "../../db/entities.js";
 
 const notes = ref([]);
+const confirmation = ref(new Set());
 const repo = remult.repo(Note);
-onMounted(() => {
-    repo.find({orderBy: {date: "asc"}})
-        .then(e => (notes.value = e));
+const newNote = reactive(repo.create({
+    date: new Date().toISOString().split('T')[0]
+}));
+
+const notesToDisplay = computed(() => [newNote, ...notes.value.sort((a, b) => new Date(b.date) - new Date(a.date))]);
+
+let unsubscribe;
+onMounted(async () => {
+    try {
+        unsubscribe = repo.liveQuery({
+            orderBy: { date: "desc" }
+        }).subscribe(info => {
+            notes.value = info.applyChanges(notes.value);
+            console.log('Notes loaded:', notes.value);
+        });
+    } catch (error) {
+        console.error('Error loading notes:', error);
+    }
 });
-const formatDate = (dateString) => {
-    return new Date(dateString + "T19:00:00").toLocaleDateString();
-}
+
+onUnmounted(() => {
+    if (unsubscribe) {
+        unsubscribe();
+    }
+});
+
+const update = async (note, j) => {
+    try {
+        if (!note.title.trim()) {
+            alert("Title is required");
+            return;
+        }
+
+        if (!note.date) {
+            alert("Date is required");
+            return;
+        }
+
+        let update;
+        if (j === 0) {
+            update = await repo.insert(newNote);
+        } else {
+            update = await repo.update(note.id, note);
+        }
+        
+        confirmation.value.add(j);
+        setTimeout(() => confirmation.value.delete(j), 3000);
+        
+        if (j === 0) {
+            Object.assign(newNote, repo.create({
+                date: new Date().toISOString().split('T')[0]
+            }));
+        }
+    } catch (error) {
+        console.error('Error updating note:', error);
+        alert("Error updating note: " + error.message);
+    }
+};
+
+const remove = async (note, j) => {
+    if (confirm(`Are you sure you want to delete the meeting "${note.title}"? This action cannot be undone.`)) {
+        try {
+            await repo.delete(note);
+        } catch (error) {
+            console.error('Error deleting note:', error);
+            alert("Error deleting note: " + error.message);
+        }
+    }
+};
 </script>
+
 <style scoped lang="scss">
-* {
-    box-sizing: border-box;
+.admin-meetings-page {
+    padding: 2rem;
+    background-color: #f5f5f5;
+    min-height: 100vh;
+    color: #2c3e50;
 }
 
-.meeting{
-    background-color: lightgrey;
-    color: darkslategrey;
-    width: 100%;
-    padding: 15px 15px 15px 15px;
+.page-header {
+    max-width: 1200px;
+    margin: 0 auto 2rem;
+    padding-top: 80px;
+    text-align: center;
+
+    h1 {
+        color: #2c3e50;
+        font-size: 2.5rem;
+        margin: 0 0 0.5rem;
+    }
+
+    .subtitle {
+        color: #666;
+        font-size: 1.1rem;
+        margin: 0;
+    }
+}
+
+.meetings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+
+.meeting-card {
+    background: white;
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+
+    &:hover {
+        transform: translateY(-2px);
+    }
+}
+
+.meeting-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    label {
+        color: #2c3e50;
+        font-weight: 500;
+    }
+}
+
+.form-input {
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+    color: #2c3e50;
+    background-color: white;
+
+    &:focus {
+        outline: none;
+        border-color: #3498db;
+    }
+
+    &::placeholder {
+        color: #999;
+    }
+}
+
+.form-textarea {
+    @extend .form-input;
+    min-height: 150px;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.5;
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.2s, opacity 0.2s;
     display: flex;
     align-items: center;
-    margin-bottom: 30px;
-    max-width: 850px;
-    h2 {
-        margin: 5px 0;
+    justify-content: center;
+    gap: 0.5rem;
+
+    &:hover {
+        transform: translateY(-1px);
     }
-    &:deep(p) {
-        margin: 5px 0;
+
+    &:active {
+        transform: translateY(0);
+        opacity: 0.9;
     }
 }
 
-.container{
-    background-image: url(https://openai-labs-public-images-prod.azureedge.net/user-PnQThMy1peuKuwTLH7WisZcE/generations/generation-vptRYyu6041Cj250PWNpBE9E/image.png);
-    background-repeat: repeat;
-    min-height: 100vh;
-    padding: 100px;
-    @media (max-width: 800px){
-        padding: 100px 10px;
+.btn-primary {
+    background-color: #3498db;
+    color: white;
+    flex: 2;
+
+    &:hover {
+        background-color: #2980b9;
     }
-    overflow: auto;
 }
 
+.btn-danger {
+    background-color: #e74c3c;
+    color: white;
+    flex: 1;
+
+    &:hover {
+        background-color: #c0392b;
+    }
+}
+
+.confirmation-icon {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+}
 </style>
